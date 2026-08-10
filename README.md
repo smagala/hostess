@@ -18,15 +18,50 @@ hostess writes the alignment once and derives everything from it.
 
 ## What it produces
 
+By default, the same things hostile produces:
+
 | file | purpose |
 | --- | --- |
 | `<prefix>.clean_1.fastq.gz`, `.clean_2.fastq.gz` | dehosted reads |
-| `<prefix>.host.bam` + `.bai` | removed reads, coordinate-sorted and indexed |
-| `<prefix>.host.flagstat.txt`, `.host.stats.txt` | BAM statistics |
 | `<prefix>.hostess.json` | run report |
 
-Load the BAM in IGV against the host reference to see exactly what was removed
+With `--bam`, the removed reads are kept as well:
+
+| file | purpose |
+| --- | --- |
+| `<prefix>.host.bam` + `.bai` | removed reads, coordinate-sorted and indexed |
+| `<prefix>.host.flagstat.txt`, `.host.stats.txt` | BAM statistics |
+
+Load that BAM in IGV against the host reference to see exactly what was removed
 and where it aligned.
+
+## Aligners
+
+`--aligner auto` (the default) resolves the way hostile does: bowtie2 given two
+FASTQs, minimap2 given one. That infers read length from file count, so
+**single-end short reads resolve to minimap2 and should be given
+`--aligner bowtie2` explicitly** — hostile's own help says the same.
+
+| input | aligner | preset |
+| --- | --- | --- |
+| paired short reads | bowtie2 | `-k 1 --mm` |
+| long reads | minimap2 | `-ax map-ont --secondary no` |
+| paired short reads, forced | minimap2 | `-ax sr --secondary no` |
+
+## Relationship to hostile's command line
+
+`hostess clean` takes hostile's arguments where they mean the same thing:
+`--fastq1`, `--fastq2`, `--aligner`, `--index`, `-o/--output`, `-t/--threads`,
+`--aligner-args`, `--force`, `--reorder`.
+
+Two deliberately differ:
+
+- `--airplane` is accepted and ignored. hostile uses it to stop the tool
+  downloading a reference index; hostess never downloads one, so it is always
+  effectively on. Accepted so existing command lines keep working.
+- `--invert` is rejected, with a message pointing at `--bam`. hostile inverts
+  because it throws the host reads away, so the only way to see them is to
+  throw the other set away instead. `--bam` keeps both.
 
 ## MultiQC
 
@@ -142,11 +177,20 @@ supported by omitting `--fastq2`.
 
 Requires `bowtie2` and `samtools` on `PATH`.
 
+## Dependencies
+
+`bowtie2`, `minimap2` and `samtools` on `PATH`, and Python 3.10+. Nothing
+outside the standard library.
+
+All three binaries are already present in the published hostile container
+(`bowtie2`, `minimap2 2.30`, `samtools 1.22.1`, Python 3.13), so hostess can be
+added to it as an alternative entry point without changing its dependencies.
+
 ## Status
 
-Early. The pipeline, report and thread allocation are covered by tests and have
-been run end to end, but this has not been used in production. Long-read
-support via minimap2 is not implemented.
+Early, and not yet used in production. Covered by 100 tests and verified end to
+end in all four combinations of paired/long-read and with/without `--bam`,
+including that the read counts agree between the two counting paths.
 
 ## Licence
 

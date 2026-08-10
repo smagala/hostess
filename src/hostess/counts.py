@@ -50,6 +50,17 @@ def _first(pattern: re.Pattern[str], text: str, label: str) -> int:
     raise ValueError(f"no '{label}' line found in flagstat output")
 
 
+def host_reads_from_count_file(path: Path) -> int:
+    """Read the count written by `samtools view -c` when no BAM was requested."""
+    text = path.read_text().strip()
+    if not text:
+        raise ValueError(f"{path}: empty count file")
+    try:
+        return int(text.splitlines()[0])
+    except ValueError as exc:
+        raise ValueError(f"{path}: not a read count: {text[:40]!r}") from exc
+
+
 def reads_in_fastq(path: Path) -> int:
     """Count reads in a gzipped FASTQ.
 

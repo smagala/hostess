@@ -10,8 +10,8 @@ import pytest
 from hostess import pipeline
 
 
-def _paths(tmp_path: Path, paired: bool = True) -> pipeline.Paths:
-    return pipeline.Paths.for_sample(tmp_path, "SAMPLE", paired=paired)
+def _paths(tmp_path: Path, paired: bool = True, bam: bool = True) -> pipeline.Paths:
+    return pipeline.Paths.for_sample(tmp_path, "SAMPLE", paired=paired, bam=bam)
 
 
 def _cmd(tmp_path: Path, **overrides) -> str:
@@ -20,6 +20,7 @@ def _cmd(tmp_path: Path, **overrides) -> str:
         fastq1=Path("/data/SAMPLE_R1.fastq.gz"),
         fastq2=Path("/data/SAMPLE_R2.fastq.gz"),
         paths=_paths(tmp_path),
+        aligner=pipeline.BOWTIE2,
         align_threads=4,
         sort_threads=2,
         compression_threads=1,

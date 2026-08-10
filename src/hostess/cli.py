@@ -1,4 +1,17 @@
-"""Command line interface."""
+"""Command line interface.
+
+The signature follows `hostile clean` where that makes sense, so an existing
+invocation mostly transfers. It does not follow it where the behaviour differs:
+
+  --airplane   accepted and ignored. hostile uses it to disable downloading a
+               reference index. hostess never downloads one, so it is always
+               effectively on. Accepted so existing command lines do not break.
+  --invert     not supported. hostile's inversion exists because it discards
+               the host reads; --bam keeps them, which is strictly more useful
+               than swapping which set is thrown away. Rejected with a message
+               pointing at --bam rather than silently ignored.
+  --bam        new. Off by default, so the default output matches hostile's.
+"""
 
 from __future__ import annotations
 
@@ -51,56 +64,105 @@ def allocate_threads(total: int) -> tuple[int, int, int]:
     return align, sort, compress
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hostess",
         description=(
-            "Dehost short reads in a single alignment pass, keeping the removed "
-            "reads as a coordinate-sorted BAM for inspection."
+            "Dehost reads in a single alignment pass, optionally keeping the "
+            "removed reads as a coordinate-sorted BAM."
         ),
     )
     parser.add_argument("--version", action="version", version=f"hostess {__version__}")
-    parser.add_argument("--fastq1", required=True, type=Path)
-    parser.add_argument("--fastq2", type=Path, help="omit for single-end input")
-    parser.add_argument(
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # Named `clean` so `hostess clean ...` mirrors `hostile clean ...`.
+    clean = sub.add_parser("clean", help="remove host reads")
+    clean.add_argument("--fastq1", required=True, type=Path)
+    clean.add_argument("--fastq2", type=Path, help="omit for single-end or long reads")
+    clean.add_argument(
+        "--aligner",
+        choices=["bowtie2", "minimap2", "auto"],
+        default="auto",
+        help=(
+            "auto resolves as hostile does: bowtie2 given two FASTQs, minimap2 "
+            "given one. That infers read length from file count and is wrong "
+            "for single-end short reads, so set it explicitly for those."
+        ),
+    )
+    clean.add_argument(
         "--index",
         required=True,
         type=Path,
-        help="bowtie2 index prefix, i.e. the path without the .N.bt2 suffix",
+        help="bowtie2 index prefix, or a reference FASTA/MMI for minimap2",
     )
-    parser.add_argument("--output", type=Path, default=Path("."))
-    parser.add_argument("--prefix", help="output basename (default: derived from --fastq1)")
-    parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("--sort-memory", default="768M", help="per sorting thread")
-    parser.add_argument("--aligner-args", default="", help="extra bowtie2 arguments")
-    parser.add_argument(
+    clean.add_argument("-o", "--output", type=Path, default=Path("."))
+    clean.add_argument("--prefix", help="output basename (default: from --fastq1)")
+    clean.add_argument("-t", "--threads", type=int, default=4)
+    clean.add_argument("--aligner-args", default="", help="extra aligner arguments")
+    clean.add_argument("--force", action="store_true", help="overwrite existing output")
+    clean.add_argument(
+        "--bam",
+        action="store_true",
+        help=(
+            "also write the removed reads as a coordinate-sorted, indexed BAM "
+            "with flagstat and stats. Off by default."
+        ),
+    )
+    clean.add_argument("--sort-memory", default="768M", help="per sorting thread")
+    clean.add_argument(
         "--reorder",
         action="store_true",
         help=(
-            "make FASTQ output order deterministic. Off by default: bowtie2's "
-            "--reorder buffers alignments and raised measured peak memory from "
-            "under 12 GB to 43.6 GB at four alignment threads."
+            "make FASTQ output order deterministic (bowtie2 only). Off by "
+            "default: --reorder buffers alignments and raised measured peak "
+            "RSS from under 12 GB to 43.6 GB at four alignment threads."
         ),
     )
-    parser.add_argument("--dry-run", action="store_true", help="print the pipeline and exit")
+    clean.add_argument(
+        "--airplane",
+        action="store_true",
+        help="accepted for hostile compatibility and ignored; hostess never downloads an index",
+    )
+    clean.add_argument("--invert", action="store_true", help=argparse.SUPPRESS)
+    clean.add_argument("--dry-run", action="store_true", help="print the pipeline and exit")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
-    for tool in ("bowtie2", "samtools"):
-        if shutil.which(tool) is None and not args.dry_run:
-            parser.error(f"{tool} not found on PATH")
+    if args.invert:
+        parser.error(
+            "--invert is not supported. hostile inverts because it discards the "
+            "host reads; use --bam to keep them as a sorted BAM instead."
+        )
 
-    if not args.fastq1.exists() and not args.dry_run:
-        parser.error(f"--fastq1 does not exist: {args.fastq1}")
-    if args.fastq2 is not None and not args.fastq2.exists() and not args.dry_run:
-        parser.error(f"--fastq2 does not exist: {args.fastq2}")
+    aligner = pipeline.choose_aligner(fastq2=args.fastq2, requested=args.aligner)
+
+    if not args.dry_run:
+        for tool in (aligner, "samtools"):
+            if shutil.which(tool) is None:
+                parser.error(f"{tool} not found on PATH")
+        if not args.fastq1.exists():
+            parser.error(f"--fastq1 does not exist: {args.fastq1}")
+        if args.fastq2 is not None and not args.fastq2.exists():
+            parser.error(f"--fastq2 does not exist: {args.fastq2}")
+
+    if args.reorder and aligner != pipeline.BOWTIE2:
+        parser.error("--reorder applies to bowtie2 only")
 
     prefix = args.prefix or _stem(args.fastq1)
     paired = args.fastq2 is not None
     args.output.mkdir(parents=True, exist_ok=True)
-    paths = pipeline.Paths.for_sample(args.output, prefix, paired=paired)
+    paths = pipeline.Paths.for_sample(args.output, prefix, paired=paired, bam=args.bam)
+
+    if not args.force and not args.dry_run and paths.clean_1.exists():
+        parser.error(f"{paths.clean_1} exists. Use --force to overwrite.")
 
     align, sort, compress = allocate_threads(args.threads)
     command = pipeline.build_command(
+        aligner=aligner,
         index=args.index,
         fastq1=args.fastq1,
         fastq2=args.fastq2,
@@ -122,11 +184,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hostess: alignment pipeline failed ({result.returncode})", file=sys.stderr)
         return result.returncode
 
-    reads_removed = counts.host_reads_from_flagstat(paths.host_flagstat)
+    if args.bam:
+        reads_removed = counts.host_reads_from_flagstat(paths.host_flagstat)
+    else:
+        reads_removed = counts.host_reads_from_count_file(paths.host_count)
+        paths.host_count.unlink(missing_ok=True)
+
     clean = counts.reads_in_fastq(paths.clean_1)
-    # For paired input each fragment contributes two reads, and the clean
-    # FASTQs hold one mate each, so the read total is twice one file's count.
+    # For paired input each fragment contributes two reads and the clean FASTQs
+    # hold one mate each, so the read total is twice one file's count.
     reads_out = clean * 2 if paired else clean
+
+    options = []
+    if args.reorder:
+        options.append("reorder")
+    if args.bam:
+        options.append("bam")
 
     entry = report.build_entry(
         version=__version__,
@@ -135,13 +208,15 @@ def main(argv: list[str] | None = None) -> int:
         fastq2=args.fastq2,
         reads_in=reads_out + reads_removed,
         reads_removed=reads_removed,
-        options=["reorder"] if args.reorder else [],
+        aligner=aligner,
+        options=options,
         host_bam=paths.host_bam,
     )
     report.write(paths.report, [entry])
 
     print(f"hostess: {reads_removed} host reads removed, {reads_out} kept")
-    print(f"hostess: removed reads written to {paths.host_bam}")
+    if args.bam:
+        print(f"hostess: removed reads written to {paths.host_bam}")
     return 0
 
 
