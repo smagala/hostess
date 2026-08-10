@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hostess"
+version = "0.1.0"
+description = "Dehost short reads in a single alignment pass, keeping the removed reads as a sorted BAM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+
+[project.scripts]
+hostess = "hostess.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hostess"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
