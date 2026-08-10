@@ -86,23 +86,45 @@ one alignment thread to 43.6 GB at four. Nothing here depends on read order —
 the host reads are coordinate-sorted anyway. Pass `--reorder` if you need
 byte-reproducible FASTQ ordering.
 
-### It is not faster than hostile
+### Compared with hostile
 
-Head to head, same data, same thread count, both without `--reorder`:
+Producing only clean reads, hostile is slightly quicker, because hostess is also
+sorting, indexing and computing statistics over the host BAM:
 
 | dataset | hostess | hostile |
 | --- | --- | --- |
 | 533k pairs, 0 percent host | 1618 ms | 1475 ms |
 | 40k pairs, 100 percent host | 915 ms | 717 ms |
 
-hostess is roughly 25 percent slower because it is doing strictly more work:
-sorting, indexing and computing statistics over the host BAM. That is the
-feature, not overhead to be optimised away — the alternative is a second
-alignment pass with `--invert`, which costs far more.
+That comparison is not like for like, though, because hostile has not produced
+the removed reads. Getting them out of hostile means running `clean` again with
+`--invert`, which yields FASTQs rather than a BAM, and then aligning those a
+third time to get something sortable and viewable.
 
-Both datasets are small enough that fixed costs dominate. The ratio on
-multi-hour samples has not been measured, and the two things that would help
-there — one pass instead of two, and `--reorder` off — both favour hostess.
+Producing the **same artefacts** — clean FASTQs, a coordinate-sorted indexed BAM
+of the removed reads, flagstat and stats — the ordering reverses:
+
+| dataset | hostess (1 alignment) | hostile route (3 alignments) | |
+| --- | --- | --- | --- |
+| 40k pairs, 100 percent host | **909 ms** | 2158 ms | 2.4x |
+| 533k pairs, 0 percent host | **1616 ms** | 2278 ms | 1.4x |
+
+Verified equivalent: both routes yield 80000 reads in the host BAM and the same
+clean read count.
+
+The margin widens with host content, which is the direction real samples go. It
+should also widen with sample size, since hostess pays the index load and the
+read decompression once instead of three times — though that has not been
+measured on a multi-hour sample.
+
+### Compression is already BGZF
+
+`samtools fastq` writes BGZF through htslib, not plain gzip, confirmed by the
+`BC` subfield in the header and by `bgzip -t` validating the block structure.
+So the output is already block-compressed: gzip-compatible for anything that
+reads it, while remaining indexable and parallel-decompressible. There is
+nothing to gain by piping through `bgzip` separately, and doing so would add a
+process and a copy.
 
 ## Usage
 
