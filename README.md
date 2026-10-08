@@ -194,4 +194,4 @@ including that the read counts agree between the two counting paths.
 
 ## Licence
 
-Apache-2.0. hostile is MIT, © Bede Constantinides.
+MIT, the same as [hostile](https://github.com/bede/hostile), which hostess builds on. hostile's notice, © Bede Constantinides, is kept in [LICENSE](LICENSE).
